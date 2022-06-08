@@ -1,0 +1,10 @@
+apiVersion: getambassador.io/v2
+kind: Mapping
+metadata:
+  name: nats-client-service
+  namespace: nats-client
+spec:
+  prefix: /esb/esb
+  rewrite: /esb
+  service: nats-client-service
+  timeout_ms: 60000

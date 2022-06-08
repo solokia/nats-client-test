@@ -1,23 +1,94 @@
-import asyncio
+import requests
+from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import nats
-from nats.errors import ConnectionClosedError, TimeoutError, NoServersError
+from nats.aio.client import Client as NATS
+# from nats.errors import ConnectionClosedError, TimeoutError, NoServersError
 import os
 from dotenv import load_dotenv
+from pydantic import BaseModel
+class Item(BaseModel):
+    sub : str
+    msg : str
+    
+load_dotenv()
+port = os.getenv("NATS_PORT",4222)
+host = os.getenv("NATS_HOST", "127.0.0.1")
+print("host : {host}".format(host=host))
+
+nc= NATS()
+
+router = APIRouter(
+    prefix='/esb',
+    tags=['esb'],
+    responses={
+        404: {'description': 'Not found'}
+        }
+)
+
+async def doSomethingRandom():
+    url = 'https://coffee.alexflipnote.dev/random.json'
+    try:
+        print("test function.")
+        x = requests.get(url)
+        print("request responded.")
+    except Exception as e:
+        print(e)
+    #print the response text (the content of the requested file):
+    else:
+        print(x.json)
+        return x.text
+    
+@router.get("/")
+async def get_test():
+    print("get request")
+    return await doSomethingRandom()
+
+@router.post("/pub")
+async def publish_message(item:Item):
+    if(nc.is_connected):
+        #message needs to be in bytes.
+        await nc.publish(item.sub, item.msg.encode(encoding = 'UTF-8'))
+        return 200
+    else:
+         raise HTTPException(
+            status_code=400, detail="no nc"
+        )
 
 
-async def main():
-    # It is very likely that the demo server will see traffic from clients other than yours.
-    # To avoid this, start your own locally and modify the example to use it.
-    load_dotenv()
-    port = os.getenv("NATS_PORT",4222)
-    host = os.getenv("NATS_HOST", "127.0.0.1")
-    # service.namespace.svc.cluster.local
-    nc = await nats.connect("nats://{host}:{port}".format(host=host,port=port))
+# args for swagger
+app = FastAPI(title='FastAPI', description='description', version='0.1')
 
-    # You can also use the following for TLS against the demo server.
-    #
-    # nc = await nats.connect("tls://demo.nats.io:4443")
+origins = [
+    '*'
+]
+# CORS - Cross origin resource sharing
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=False,
+    allow_methods=['*'],
+    allow_headers=['*']
+)
 
+
+app.include_router(router)
+
+
+@app.on_event("startup")
+async def run():
+    print("startup")
+    async def disconnected_cb():
+        print("Got disconnected...")
+
+    async def reconnected_cb():
+        print("Got reconnected...")
+
+    await nc.connect("nats://{host}:{port}".format(host=host,port=port),reconnected_cb=reconnected_cb,
+                     disconnected_cb=disconnected_cb,
+                     max_reconnect_attempts=-1)   
+
+    # the function for callback.
     async def message_handler(msg):
         subject = msg.subject
         reply = msg.reply
@@ -28,46 +99,12 @@ async def main():
     # Simple publisher and async subscriber via coroutine.
     sub = await nc.subscribe("foo", cb=message_handler)
 
-    # Stop receiving after 2 messages.
-    await sub.unsubscribe(limit=2)
-    await nc.publish("foo", b'Hello')
-    await nc.publish("foo", b'World')
-    await nc.publish("foo", b'!!!!!')
+# if __name__ == 'main':
 
-    # Synchronous style with iterator also supported.
-    sub = await nc.subscribe("bar")
-    await nc.publish("bar", b'First')
-    await nc.publish("bar", b'Second')
-
-    try:
-        async for msg in sub.messages:
-            print(f"Received a message on '{msg.subject} {msg.reply}': {msg.data.decode()}")
-            await sub.unsubscribe()
-    except Exception as e:
-        pass
-
-    async def help_request(msg):
-        print(f"Received a message on '{msg.subject} {msg.reply}': {msg.data.decode()}")
-        await nc.publish(msg.reply, b'I can help')
-
-    # Use queue named 'workers' for distributing requests
-    # among subscribers.
-    sub = await nc.subscribe("help", "workers", help_request)
-
-    # Send a request and expect a single response
-    # and trigger timeout if not faster than 500 ms.
-    try:
-        response = await nc.request("help", b'help me', timeout=0.5)
-        print("Received response: {message}".format(
-            message=response.data.decode()))
-    except TimeoutError:
-        print("Request timed out")
-
-    # Remove interest in subscription.
-    await sub.unsubscribe()
-
-    # Terminate connection to NATS.
-    await nc.drain()
-
-if __name__ == '__main__':
-    asyncio.run(main())
+    # All of these doesn't work. uvicorn sets an async loop already.
+    # asyncio.create_subprocess_exec(run())
+    # loop = asyncio.get_event_loop()
+    # loop.run_until_complete(run(loop))
+    # loop.run_forever()
+    
+    # loop.close()
