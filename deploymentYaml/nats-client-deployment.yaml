@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nats-client-service
+  namespace: nats-client
+  labels:
+    app: nats-client-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nats-client-service
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: nats-client-service
+    spec:
+      nodeSelector:
+        cloud.google.com/gke-nodepool: general-pool
+      containers:
+      - name: nats-clientapi
+        image: ${image}
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 5000
+        env:
+        - name: NATS_HOST # The name of env variable
+          valueFrom:
+            secretKeyRef:
+              name: my-secret # The name of the secret
+              key: NATS_HOST # The name of the variable stored in the secret
+        - name: NATS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: my-secret # The name of the ConfigMap
+              key: NATS_PORT # The name of the variable stored in the ConfigMap
+        - name: PYTHONUNBUFFERED
+          value: "1" # set to show print
